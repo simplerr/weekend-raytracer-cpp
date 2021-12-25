@@ -1,4 +1,5 @@
 #include <iostream>
+#include <memory>
 #include <fstream>
 #include <vector>
 #include "external/glm/glm/vec3.hpp"
@@ -38,9 +39,16 @@ struct Ray
 
 struct HitRecord
 {
+   inline void setFaceNormal(const Ray& ray, glm::vec3 outwardNormal)
+   {
+      frontFace = glm::dot(ray.dir, outwardNormal) < 0.0f;
+      normal = frontFace ? outwardNormal : -outwardNormal;
+   }
+
    glm::vec3 pos;
    glm::vec3 normal;
    float t;
+   bool frontFace;
 };
 
 class Object
@@ -81,7 +89,8 @@ public:
 
       hitRecord.t = root;
       hitRecord.pos = ray.at(hitRecord.t);
-      hitRecord.normal = glm::normalize(hitRecord.pos - center);
+      glm::vec3 outwardNormal = glm::normalize(hitRecord.pos - center);
+      hitRecord.setFaceNormal(ray, outwardNormal);
 
       return true;
    }
@@ -89,6 +98,37 @@ public:
    glm::vec3 center;
    float radius;
 };
+
+class World
+{
+public:
+   void addObject(std::shared_ptr<Object> object)
+   {
+      objects.push_back(object);
+   }
+
+   bool hit(const Ray& ray, float t_min, float t_max, HitRecord& hitRecord) const
+   {
+      bool hitAnything = false;
+      float closestHit = t_max;
+
+      for (const auto& object : objects)
+      {
+         HitRecord tempRecord;
+         if (object->hit(ray, t_min, closestHit, tempRecord))
+         {
+            hitAnything = true;
+            hitRecord = tempRecord;
+            closestHit = tempRecord.t;
+         }
+      }
+
+      return hitAnything;
+   }
+private:
+   std::vector<std::shared_ptr<Object>> objects;
+};
+
 
 
 void writeImage(std::string filename, Image& image)
@@ -114,12 +154,10 @@ void writeImage(std::string filename, Image& image)
    fout.close();
 }
 
-glm::vec3 rayColor(const Ray& ray)
+glm::vec3 rayColor(const Ray& ray, const World& world)
 {
-   Sphere sphere = Sphere(glm::vec3(0.0f, 0.0f, -1.0f), 0.5f);
-
    HitRecord hitRecord;
-   if (sphere.hit(ray, 0.0f, 100.0f, hitRecord))
+   if (world.hit(ray, 0.0f, 100.0f, hitRecord))
    {
       return 0.5f * (hitRecord.normal + 1.0f); // [-1, 1] -> [0, 1]
    }
@@ -130,7 +168,7 @@ glm::vec3 rayColor(const Ray& ray)
    return (1.0f - t) * glm::vec3(1.0f, 1.0f, 1.0f) + t * glm::vec3(0.5f, 0.7f, 1.0f);
 }
 
-void render(Image& image, float aspectRatio)
+void render(Image& image, const World& world, float aspectRatio)
 {
    float viewportHeight = 2.0f;
    float viewportWidth = viewportHeight * aspectRatio;
@@ -148,7 +186,7 @@ void render(Image& image, float aspectRatio)
          float u = (float)x / (image.width - 1);
          float v = (float)y / (image.height - 1);
          Ray ray = Ray(origin, lowerLeftCorner + u * horizontal + v * vertical - origin);
-         glm::vec3 color = rayColor(ray);
+         glm::vec3 color = rayColor(ray, world);
          image.pixels[y * image.width + x] = color;
       }
    }
@@ -166,7 +204,11 @@ int main(void)
 
    Image image(width, height);
 
-   render(image, aspectRatio);
+   World world;
+   world.addObject(std::make_shared<Sphere>(glm::vec3(0.0f, 0.0f, -1.0f), 0.5f));
+   world.addObject(std::make_shared<Sphere>(glm::vec3(0.0f, -100.5f, -1.0f), 100.0f));
+
+   render(image, world, aspectRatio);
    writeImage("image.ppm", image);
 
    return 0;
