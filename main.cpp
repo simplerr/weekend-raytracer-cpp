@@ -2,6 +2,7 @@
 #include <memory>
 #include <fstream>
 #include <vector>
+#include <random>
 #include "external/glm/glm/vec3.hpp"
 #include "external/glm/glm/glm.hpp"
 #include "external/glm/glm/gtx/norm.hpp"
@@ -129,6 +130,12 @@ private:
    std::vector<std::shared_ptr<Object>> objects;
 };
 
+inline float randomDouble()
+{
+   static std::uniform_real_distribution<double> distribution(0.0, 1.0);
+   static std::mt19937 generator;
+   return distribution(generator);
+}
 
 
 void writeImage(std::string filename, Image& image)
@@ -144,7 +151,7 @@ void writeImage(std::string filename, Image& image)
       for (uint32_t x = 0; x < image.width; x++)
       {
          glm::vec3 color = image.pixels[y * image.width + x];
-         glm::ivec3 colorInt = color * glm::vec3(255.999f);
+         glm::ivec3 colorInt = color * glm::vec3(256.0f);
          fout << colorInt.x << " " << colorInt.y << " " << colorInt.z << " ";
       }
 
@@ -179,14 +186,23 @@ void render(Image& image, const World& world, float aspectRatio)
    glm::vec3 vertical = glm::vec3(0.0f, viewportHeight, 0.0f);
    glm::vec3 lowerLeftCorner = origin - (horizontal / 2.0f) - (vertical / 2.0f) - glm::vec3(0.0f, 0.0f, focalLength);
 
+   const uint32_t samplesPerPixels = 10;
+
    for (int32_t y = image.height-1; y >= 0; y--)
    {
       for (uint32_t x = 0; x < image.width; x++)
-      { 
-         float u = (float)x / (image.width - 1);
-         float v = (float)y / (image.height - 1);
-         Ray ray = Ray(origin, lowerLeftCorner + u * horizontal + v * vertical - origin);
-         glm::vec3 color = rayColor(ray, world);
+      {
+         glm::vec3 color = glm::vec3(0.0f);
+         for (uint32_t s = 0; s < samplesPerPixels; s++)
+         {
+            float u = ((float)x + randomDouble()) / (image.width - 1);
+            float v = ((float)y + randomDouble()) / (image.height - 1);
+            Ray ray = Ray(origin, lowerLeftCorner + u * horizontal + v * vertical - origin);
+            color += rayColor(ray, world);
+         }
+
+         color = color / glm::vec3(samplesPerPixels);
+         color = glm::clamp(color, glm::vec3(0.0f), glm::vec3(0.999f));
          image.pixels[y * image.width + x] = color;
       }
    }
