@@ -130,13 +130,27 @@ private:
    std::vector<std::shared_ptr<Object>> objects;
 };
 
-inline float randomDouble()
+inline float randomFloat()
 {
-   static std::uniform_real_distribution<double> distribution(0.0, 1.0);
+   static std::uniform_real_distribution<double> distribution(0.0f, 1.0f);
    static std::mt19937 generator;
    return distribution(generator);
 }
 
+inline float randomFloat(float min, float max)
+{
+   return min + (max - min) * randomFloat();
+}
+
+glm::vec3 randomPointInUnitSphere()
+{
+   while (true)
+   {
+      glm::vec3 point = glm::vec3(randomFloat(-1.0f, 1.0f), randomFloat(-1.0f, 1.0f), randomFloat(-1.0f, 1.0f));
+      if (glm::length(point) < 1.0f)
+         return point;
+   }
+}
 
 void writeImage(std::string filename, Image& image)
 {
@@ -161,12 +175,21 @@ void writeImage(std::string filename, Image& image)
    fout.close();
 }
 
-glm::vec3 rayColor(const Ray& ray, const World& world)
+glm::vec3 rayColor(const Ray& ray, const World& world, int32_t depth)
 {
    HitRecord hitRecord;
-   if (world.hit(ray, 0.0f, 100.0f, hitRecord))
+
+   if (depth <= 0)
+      return glm::vec3(0.0f);
+
+   const float shadowAcneConstant = 0.001f;
+   if (world.hit(ray, shadowAcneConstant, 100.0f, hitRecord))
    {
-      return 0.5f * (hitRecord.normal + 1.0f); // [-1, 1] -> [0, 1]
+      // Note: randomPointInUnitSphere() can be replaced by other distributions,
+      // see chapter 8.5 in the tutorial.
+      glm::vec3 target = hitRecord.pos + hitRecord.normal + randomPointInUnitSphere();
+      return 0.5f * rayColor(Ray(hitRecord.pos, target - hitRecord.pos), world, depth - 1);
+      //return 0.5f * (hitRecord.normal + 1.0f); // [-1, 1] -> [0, 1]
    }
 
    glm::vec3 unitDir = glm::normalize(ray.dir);
@@ -187,6 +210,7 @@ void render(Image& image, const World& world, float aspectRatio)
    glm::vec3 lowerLeftCorner = origin - (horizontal / 2.0f) - (vertical / 2.0f) - glm::vec3(0.0f, 0.0f, focalLength);
 
    const uint32_t samplesPerPixels = 10;
+   const int32_t maxDepth = 10;
 
    for (int32_t y = image.height-1; y >= 0; y--)
    {
@@ -195,13 +219,14 @@ void render(Image& image, const World& world, float aspectRatio)
          glm::vec3 color = glm::vec3(0.0f);
          for (uint32_t s = 0; s < samplesPerPixels; s++)
          {
-            float u = ((float)x + randomDouble()) / (image.width - 1);
-            float v = ((float)y + randomDouble()) / (image.height - 1);
+            float u = ((float)x + randomFloat(0.0f, 1.0f)) / (image.width - 1);
+            float v = ((float)y + randomFloat(0.0f, 1.0f)) / (image.height - 1);
             Ray ray = Ray(origin, lowerLeftCorner + u * horizontal + v * vertical - origin);
-            color += rayColor(ray, world);
+            color += rayColor(ray, world, maxDepth);
          }
 
          color = color / glm::vec3(samplesPerPixels);
+         color = glm::sqrt(color); // Gamma correction
          color = glm::clamp(color, glm::vec3(0.0f), glm::vec3(0.999f));
          image.pixels[y * image.width + x] = color;
       }
