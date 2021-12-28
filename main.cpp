@@ -29,6 +29,16 @@ glm::vec3 randomPointInUnitSphere()
    }
 }
 
+glm::vec3 randomPointInUnitDisc()
+{
+   while (true)
+   {
+      glm::vec3 point = glm::vec3(randomFloat(-1.0f, 1.0f), randomFloat(-1.0f, 1.0f), 0.0f);
+      if (glm::length2(point) < 1.0f)
+         return point;
+   }
+}
+
 glm::vec3 refract(const glm::vec3& uv, const glm::vec3& n, float etaiOverEtat)
 {
    float cosTheta = glm::min<float>(glm::dot(-uv, n), 1.0f);
@@ -72,7 +82,7 @@ struct Ray
 class Camera
 {
 public:
-   Camera(glm::vec3 lookFrom, glm::vec3 lookAt, float verticalFov, float aspectRatio)
+   Camera(glm::vec3 lookFrom, glm::vec3 lookAt, float verticalFov, float aspectRatio, float aperture, float focusDist)
    {
       float theta = glm::radians(verticalFov);
       float h = glm::tan(theta / 2.0f);
@@ -81,25 +91,30 @@ public:
 
       float focalLength = 1.0f;
       glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-      glm::vec3 w = glm::normalize(lookFrom - lookAt);
-      glm::vec3 u = glm::normalize(glm::cross(up, w));
-      glm::vec3 v = glm::cross(w, u);
+      w = glm::normalize(lookFrom - lookAt);
+      u = glm::normalize(glm::cross(up, w));
+      v = glm::cross(w, u);
 
       origin = lookFrom;
-      horizontal = u * viewportWidth; //glm::vec3(viewportWidth, 0.0f, 0.0f);
-      vertical = v * viewportHeight; //glm::vec3(0.0f, viewportHeight, 0.0f);
-      lowerLeftCorner = origin - (horizontal / 2.0f) - (vertical / 2.0f) - w;
+      horizontal = focusDist * u * viewportWidth;
+      vertical = focusDist * v * viewportHeight;
+      lowerLeftCorner = origin - (horizontal / 2.0f) - (vertical / 2.0f) - (focusDist * w);
+      lensRadius = aperture / 2.0f;
    }
 
    Ray getRay(float s, float t) const
    {
-      return Ray(origin, lowerLeftCorner + s * horizontal + t * vertical - origin);
+      glm::vec3 rd = lensRadius * randomPointInUnitDisc();
+      glm::vec3 offset = u * rd.x + v * rd.y;
+      return Ray(origin + offset, lowerLeftCorner + s * horizontal + t * vertical - origin - offset);
    }
 
    glm::vec3 origin;
    glm::vec3 horizontal;
    glm::vec3 vertical;
    glm::vec3 lowerLeftCorner;
+   glm::vec3 u, v, w;
+   float lensRadius;
 };
 
 struct Material;
@@ -330,11 +345,8 @@ glm::vec3 rayColor(const Ray& ray, const World& world, int32_t depth)
    return (1.0f - t) * glm::vec3(1.0f, 1.0f, 1.0f) + t * glm::vec3(0.5f, 0.7f, 1.0f);
 }
 
-void render(Image& image, const World& world, const Camera& camera)
+void render(Image& image, const World& world, const Camera& camera, uint32_t samplesPerPixel, int32_t maxDepth)
 {
-   const uint32_t samplesPerPixels = 10;
-   const int32_t maxDepth = 50;
-
    std::cout << "Remaining rows: " << std::endl;
 
    for (int32_t y = image.height - 1; y >= 0; y--)
@@ -343,7 +355,7 @@ void render(Image& image, const World& world, const Camera& camera)
       for (uint32_t x = 0; x < image.width; x++)
       {
          glm::vec3 color = glm::vec3(0.0f);
-         for (uint32_t s = 0; s < samplesPerPixels; s++)
+         for (uint32_t s = 0; s < samplesPerPixel; s++)
          {
             float u = ((float)x + randomFloat(0.0f, 1.0f)) / (image.width - 1);
             float v = ((float)y + randomFloat(0.0f, 1.0f)) / (image.height - 1);
@@ -351,7 +363,7 @@ void render(Image& image, const World& world, const Camera& camera)
             color += rayColor(ray, world, maxDepth);
          }
 
-         color = color / glm::vec3(samplesPerPixels);
+         color = color / glm::vec3(samplesPerPixel);
          color = glm::sqrt(color); // Gamma correction
          color = glm::clamp(color, glm::vec3(0.0f), glm::vec3(0.999f));
          image.pixels[y * image.width + x] = color;
@@ -359,24 +371,6 @@ void render(Image& image, const World& world, const Camera& camera)
    }
 
    std::cout << std::endl << "Rendering done!" << std::endl;
-}
-
-World createTestScene1()
-{
-   World world;
-
-   auto materialGround = std::make_shared<Lambertian>(glm::vec3(0.8f, 0.8f, 0.0f));
-   auto materialCenter = std::make_shared<Lambertian>(glm::vec3(0.1f, 0.2f, 0.5f));
-   auto materialLeft = std::make_shared<Dielectric>(1.5f);
-   auto materialRight = std::make_shared<Metal>(glm::vec3(0.8f, 0.6f, 0.2f), 0.0f);
-
-   world.addObject(std::make_shared<Sphere>(glm::vec3( 0.0, -100.5, -1.0), 100.0, materialGround));
-   world.addObject(std::make_shared<Sphere>(glm::vec3( 0.0,    0.0, -1.0),   0.5, materialCenter));
-   world.addObject(std::make_shared<Sphere>(glm::vec3(-1.0,    0.0, -1.0),   0.5, materialLeft));
-   world.addObject(std::make_shared<Sphere>(glm::vec3(-1.0,    0.0, -1.0),   -0.45, materialLeft));
-   world.addObject(std::make_shared<Sphere>(glm::vec3( 1.0,    0.0, -1.0),   0.5, materialRight));
-   
-   return world;
 }
 
 World createRandomScene()
@@ -436,12 +430,14 @@ int main(void)
    const float aspectRatio = 3.0f / 2.0f;
    const uint32_t width = 400;
    const uint32_t height = (uint32_t)(width / aspectRatio);
+   const uint32_t samplesPerPixel = 30;
+   const int32_t maxDepth = 50;
 
    Image image(width, height);
-   Camera camera = Camera(glm::vec3(13.0f, 2.0f, 3.0f), glm::vec3(0.0f), 20.0f, aspectRatio);
+   Camera camera = Camera(glm::vec3(13.0f, 2.0f, 3.0f), glm::vec3(0.0f), 20.0f, aspectRatio, 0.1f, 10.0f);
    World world = createRandomScene();
 
-   render(image, world, camera);
+   render(image, world, camera, samplesPerPixel, maxDepth);
    writeImage("image.ppm", image);
 
    return 0;
