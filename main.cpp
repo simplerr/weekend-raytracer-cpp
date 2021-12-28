@@ -335,8 +335,11 @@ void render(Image& image, const World& world, const Camera& camera)
    const uint32_t samplesPerPixels = 10;
    const int32_t maxDepth = 50;
 
-   for (int32_t y = image.height-1; y >= 0; y--)
+   std::cout << "Remaining rows: " << std::endl;
+
+   for (int32_t y = image.height - 1; y >= 0; y--)
    {
+      std::cout << y << ", " << std::flush;
       for (uint32_t x = 0; x < image.width; x++)
       {
          glm::vec3 color = glm::vec3(0.0f);
@@ -355,20 +358,12 @@ void render(Image& image, const World& world, const Camera& camera)
       }
    }
 
-   std::cout << "Done" << std::endl;
+   std::cout << std::endl << "Rendering done!" << std::endl;
 }
 
-int main(void)
+World createTestScene1()
 {
-   std::cout << "Hello world!" << std::endl;
-
-   const float aspectRatio = 16.0f / 9.0f;
-   const uint32_t width = 800;
-   const uint32_t height = (uint32_t)(width / aspectRatio);
-
-   Image image(width, height);
    World world;
-   Camera camera = Camera(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(0.0f, 0.0f, -1.0f), 90.0f, aspectRatio);
 
    auto materialGround = std::make_shared<Lambertian>(glm::vec3(0.8f, 0.8f, 0.0f));
    auto materialCenter = std::make_shared<Lambertian>(glm::vec3(0.1f, 0.2f, 0.5f));
@@ -380,6 +375,71 @@ int main(void)
    world.addObject(std::make_shared<Sphere>(glm::vec3(-1.0,    0.0, -1.0),   0.5, materialLeft));
    world.addObject(std::make_shared<Sphere>(glm::vec3(-1.0,    0.0, -1.0),   -0.45, materialLeft));
    world.addObject(std::make_shared<Sphere>(glm::vec3( 1.0,    0.0, -1.0),   0.5, materialRight));
+   
+   return world;
+}
+
+World createRandomScene()
+{
+   World world;
+
+   auto groundMaterial = std::make_shared<Lambertian>(glm::vec3(0.5f, 0.5f, 0.5f));
+   auto lambertianMaterial = std::make_shared<Lambertian>(glm::vec3(0.4f, 0.2f, 0.1f));
+   auto dielectricMaterial = std::make_shared<Dielectric>(1.5f);
+   auto metalMaterial = std::make_shared<Metal>(glm::vec3(0.7f, 0.6f, 0.5f), 0.0f);
+
+   world.addObject(std::make_shared<Sphere>(glm::vec3(0.0f, -1000.0f, 0.0f), 1000.0f, groundMaterial));
+   world.addObject(std::make_shared<Sphere>(glm::vec3(-4.0f, 1.0, 0.0), 1.0f, lambertianMaterial));
+   world.addObject(std::make_shared<Sphere>(glm::vec3(0.0f, 1.0, 0.0), 1.0f, dielectricMaterial));
+   world.addObject(std::make_shared<Sphere>(glm::vec3(4.0f, 1.0, 0.0), 1.0f, metalMaterial));
+   
+   for (int a = -11; a < 11; a++)
+   {
+      for (int b = -11; b < 11; b++)
+      {
+         float chooseMat = randomFloat();
+         glm::vec3 center = glm::vec3(a + 0.9f * randomFloat(), 0.2f, b + 0.9f * randomFloat());
+
+         if (glm::distance(center, glm::vec3(4.0f, 0.2f, 0.0f)) > 0.9f)
+         {
+            std::shared_ptr<Material> material;
+
+            if (chooseMat < 0.8f)
+            {
+               glm::vec3 color1 = glm::vec3(randomFloat(), randomFloat(), randomFloat());
+               glm::vec3 color2 = glm::vec3(randomFloat(), randomFloat(), randomFloat());
+               glm::vec3 albedo = color1 * color2;
+               material = std::make_shared<Lambertian>(albedo);
+               world.addObject(std::make_shared<Sphere>(center, 0.2, material));
+            }
+            else if (chooseMat < 0.95f)
+            {
+               glm::vec3 albedo = glm::vec3(randomFloat(0.5f, 1.0f), randomFloat(0.5f, 1.0f), randomFloat(0.5f, 1.0f));
+               float fuzz = randomFloat(0.0f, 0.5f);
+               material = std::make_shared<Metal>(albedo, fuzz);
+               world.addObject(std::make_shared<Sphere>(center, 0.2, material));
+            }
+            else
+            {
+               material = std::make_shared<Dielectric>(1.5f);
+               world.addObject(std::make_shared<Sphere>(center, 0.2, material));
+            }
+         }
+      }
+   }
+
+   return world;
+}
+
+int main(void)
+{
+   const float aspectRatio = 3.0f / 2.0f;
+   const uint32_t width = 400;
+   const uint32_t height = (uint32_t)(width / aspectRatio);
+
+   Image image(width, height);
+   Camera camera = Camera(glm::vec3(13.0f, 2.0f, 3.0f), glm::vec3(0.0f), 20.0f, aspectRatio);
+   World world = createRandomScene();
 
    render(image, world, camera);
    writeImage("image.ppm", image);
