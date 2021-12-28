@@ -29,6 +29,14 @@ glm::vec3 randomPointInUnitSphere()
    }
 }
 
+glm::vec3 refract(const glm::vec3& uv, const glm::vec3& n, float etaiOverEtat)
+{
+   float cosTheta = glm::min<float>(glm::dot(-uv, n), 1.0f);
+   glm::vec3 rOutPerp = etaiOverEtat * (uv + cosTheta * n);
+   glm::vec3 rOutParallel = -glm::sqrt(glm::abs<float>(1.0f - glm::length2(rOutPerp))) * n;
+   return rOutPerp + rOutParallel;
+}
+
 struct Image
 {
    Image(uint32_t width, uint32_t height) 
@@ -123,6 +131,43 @@ public:
    float fuzz;
 };
 
+class Dielectric : public Material
+{
+public:
+   Dielectric(float indexOfRefraction) : ir(indexOfRefraction) {}
+
+   virtual bool scatter(const Ray& inputRay, const HitRecord& hitRecord, glm::vec3& attenuation, Ray& scatteredRay) const override
+   {
+      attenuation = glm::vec3(1.0f);
+      float refractionRatio = hitRecord.frontFace ? (1.0f / ir) : ir;
+
+      glm::vec3 normalizedDirection = glm::normalize(inputRay.dir);
+      float cosTheta = glm::min<float>(glm::dot(-normalizedDirection, hitRecord.normal), 1.0f);
+      float sinTheta = glm::sqrt(1.0f - cosTheta * cosTheta);
+
+      bool cannotRefract = ((refractionRatio * sinTheta) > 1.0f);
+      glm::vec3 direction;
+
+      if (cannotRefract || (calcReflectance(cosTheta, refractionRatio) > randomFloat()))
+         direction = reflect(normalizedDirection, hitRecord.normal);
+      else
+         direction = refract(normalizedDirection, hitRecord.normal, refractionRatio);
+
+      scatteredRay = Ray(hitRecord.pos, direction);
+      return true;
+   }
+
+   float calcReflectance(float cosine, float refIdx) const
+   {
+      // Schlick's approximation
+      float r0 = (1.0f - refIdx) / (1.0f + refIdx);
+      r0 = r0 * r0;
+      return r0 + (1.0f - r0) * glm::pow((1.0f - cosine), 5.0f);
+   }
+
+   float ir;
+};
+
 class Object
 {
 public:
@@ -162,7 +207,7 @@ public:
 
       hitRecord.t = root;
       hitRecord.pos = ray.at(hitRecord.t);
-      glm::vec3 outwardNormal = glm::normalize(hitRecord.pos - center);
+      glm::vec3 outwardNormal = (hitRecord.pos - center) / radius;
       hitRecord.setFaceNormal(ray, outwardNormal);
       hitRecord.material = material;
 
@@ -264,7 +309,7 @@ void render(Image& image, const World& world, float aspectRatio)
    glm::vec3 lowerLeftCorner = origin - (horizontal / 2.0f) - (vertical / 2.0f) - glm::vec3(0.0f, 0.0f, focalLength);
 
    const uint32_t samplesPerPixels = 10;
-   const int32_t maxDepth = 10;
+   const int32_t maxDepth = 50;
 
    for (int32_t y = image.height-1; y >= 0; y--)
    {
@@ -300,14 +345,15 @@ int main(void)
    Image image(width, height);
 
    auto materialGround = std::make_shared<Lambertian>(glm::vec3(0.8f, 0.8f, 0.0f));
-   auto materialCenter = std::make_shared<Lambertian>(glm::vec3(0.7f, 0.3f, 0.3f));
-   auto materialLeft = std::make_shared<Metal>(glm::vec3(0.8f, 0.8f, 0.8f), 0.0f);
+   auto materialCenter = std::make_shared<Lambertian>(glm::vec3(0.1f, 0.2f, 0.5f));
+   auto materialLeft = std::make_shared<Dielectric>(1.5f);
    auto materialRight = std::make_shared<Metal>(glm::vec3(0.8f, 0.6f, 0.2f), 1.0f);
 
    World world;
    world.addObject(std::make_shared<Sphere>(glm::vec3( 0.0, -100.5, -1.0), 100.0, materialGround));
    world.addObject(std::make_shared<Sphere>(glm::vec3( 0.0,    0.0, -1.0),   0.5, materialCenter));
    world.addObject(std::make_shared<Sphere>(glm::vec3(-1.0,    0.0, -1.0),   0.5, materialLeft));
+   world.addObject(std::make_shared<Sphere>(glm::vec3(-1.0,    0.0, -1.0),   -0.4, materialLeft));
    world.addObject(std::make_shared<Sphere>(glm::vec3( 1.0,    0.0, -1.0),   0.5, materialRight));
 
    render(image, world, aspectRatio);
