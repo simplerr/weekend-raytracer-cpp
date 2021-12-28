@@ -7,6 +7,28 @@
 #include "external/glm/glm/glm.hpp"
 #include "external/glm/glm/gtx/norm.hpp"
 
+inline float randomFloat()
+{
+   static std::uniform_real_distribution<double> distribution(0.0f, 1.0f);
+   static std::mt19937 generator;
+   return distribution(generator);
+}
+
+inline float randomFloat(float min, float max)
+{
+   return min + (max - min) * randomFloat();
+}
+
+glm::vec3 randomPointInUnitSphere()
+{
+   while (true)
+   {
+      glm::vec3 point = glm::vec3(randomFloat(-1.0f, 1.0f), randomFloat(-1.0f, 1.0f), randomFloat(-1.0f, 1.0f));
+      if (glm::length(point) < 1.0f)
+         return point;
+   }
+}
+
 struct Image
 {
    Image(uint32_t width, uint32_t height) 
@@ -23,6 +45,7 @@ struct Image
 
 struct Ray
 {
+   Ray() {}
    Ray(glm::vec3 origin, glm::vec3 dir)
    {
       this->origin = origin;
@@ -38,6 +61,8 @@ struct Ray
    glm::vec3 dir;
 };
 
+struct Material;
+
 struct HitRecord
 {
    inline void setFaceNormal(const Ray& ray, glm::vec3 outwardNormal)
@@ -46,10 +71,56 @@ struct HitRecord
       normal = frontFace ? outwardNormal : -outwardNormal;
    }
 
+   std::shared_ptr<Material> material;
    glm::vec3 pos;
    glm::vec3 normal;
    float t;
    bool frontFace;
+};
+
+class Material
+{
+public:
+   virtual bool scatter(const Ray& inputRay, const HitRecord& hitRecord, glm::vec3& attenuation, Ray& scatteredRay) const = 0;
+};
+
+class Lambertian : public Material
+{
+public:
+   Lambertian(glm::vec3 color) : albedo(color) {}
+
+   virtual bool scatter(const Ray& inputRay, const HitRecord& hitRecord, glm::vec3& attenuation, Ray& scatteredRay) const override
+   {
+      // Note: randomPointInUnitSphere() can be replaced by other distributions,
+      // see chapter 8.5 in the tutorial.
+      glm::vec3 scatterDirection = hitRecord.normal + randomPointInUnitSphere();
+
+      if (glm::length(scatterDirection) < FLT_EPSILON)
+         scatterDirection = hitRecord.normal;
+
+      scatteredRay = Ray(hitRecord.pos, scatterDirection);
+      attenuation = albedo;
+      return true;
+   }
+
+   glm::vec3 albedo;
+};
+
+class Metal : public Material
+{
+public:
+   Metal(glm::vec3 color, float f) : albedo(color), fuzz(f) {}
+
+   virtual bool scatter(const Ray& inputRay, const HitRecord& hitRecord, glm::vec3& attenuation, Ray& scatteredRay) const override
+   {
+      glm::vec3 reflected = glm::reflect(glm::normalize(inputRay.dir), hitRecord.normal);
+      scatteredRay = Ray(hitRecord.pos, reflected + fuzz * randomPointInUnitSphere());
+      attenuation = albedo;
+      return (glm::dot(scatteredRay.dir, hitRecord.normal) > 0);
+   }
+
+   glm::vec3 albedo;
+   float fuzz;
 };
 
 class Object
@@ -61,10 +132,11 @@ public:
 class Sphere : public Object
 {
 public:
-   Sphere(glm::vec3 center, float radius)
+   Sphere(glm::vec3 center, float radius, std::shared_ptr<Material> material)
    {
       this->center = center;
       this->radius = radius;
+      this->material = material;
    }
 
    virtual bool hit(const Ray& ray, float t_min, float t_max, HitRecord& hitRecord) override
@@ -92,10 +164,12 @@ public:
       hitRecord.pos = ray.at(hitRecord.t);
       glm::vec3 outwardNormal = glm::normalize(hitRecord.pos - center);
       hitRecord.setFaceNormal(ray, outwardNormal);
+      hitRecord.material = material;
 
       return true;
    }
 
+   std::shared_ptr<Material> material;
    glm::vec3 center;
    float radius;
 };
@@ -130,28 +204,6 @@ private:
    std::vector<std::shared_ptr<Object>> objects;
 };
 
-inline float randomFloat()
-{
-   static std::uniform_real_distribution<double> distribution(0.0f, 1.0f);
-   static std::mt19937 generator;
-   return distribution(generator);
-}
-
-inline float randomFloat(float min, float max)
-{
-   return min + (max - min) * randomFloat();
-}
-
-glm::vec3 randomPointInUnitSphere()
-{
-   while (true)
-   {
-      glm::vec3 point = glm::vec3(randomFloat(-1.0f, 1.0f), randomFloat(-1.0f, 1.0f), randomFloat(-1.0f, 1.0f));
-      if (glm::length(point) < 1.0f)
-         return point;
-   }
-}
-
 void writeImage(std::string filename, Image& image)
 {
    std::ofstream fout = std::ofstream(filename);
@@ -185,11 +237,13 @@ glm::vec3 rayColor(const Ray& ray, const World& world, int32_t depth)
    const float shadowAcneConstant = 0.001f;
    if (world.hit(ray, shadowAcneConstant, 100.0f, hitRecord))
    {
-      // Note: randomPointInUnitSphere() can be replaced by other distributions,
-      // see chapter 8.5 in the tutorial.
-      glm::vec3 target = hitRecord.pos + hitRecord.normal + randomPointInUnitSphere();
-      return 0.5f * rayColor(Ray(hitRecord.pos, target - hitRecord.pos), world, depth - 1);
-      //return 0.5f * (hitRecord.normal + 1.0f); // [-1, 1] -> [0, 1]
+      Ray scatteredRay;
+      glm::vec3 attenuation;
+
+      if (hitRecord.material->scatter(ray, hitRecord, attenuation, scatteredRay))
+         return attenuation * rayColor(scatteredRay, world, depth - 1);
+
+      return glm::vec3(0.0f);
    }
 
    glm::vec3 unitDir = glm::normalize(ray.dir);
@@ -245,9 +299,16 @@ int main(void)
 
    Image image(width, height);
 
+   auto materialGround = std::make_shared<Lambertian>(glm::vec3(0.8f, 0.8f, 0.0f));
+   auto materialCenter = std::make_shared<Lambertian>(glm::vec3(0.7f, 0.3f, 0.3f));
+   auto materialLeft = std::make_shared<Metal>(glm::vec3(0.8f, 0.8f, 0.8f), 0.0f);
+   auto materialRight = std::make_shared<Metal>(glm::vec3(0.8f, 0.6f, 0.2f), 1.0f);
+
    World world;
-   world.addObject(std::make_shared<Sphere>(glm::vec3(0.0f, 0.0f, -1.0f), 0.5f));
-   world.addObject(std::make_shared<Sphere>(glm::vec3(0.0f, -100.5f, -1.0f), 100.0f));
+   world.addObject(std::make_shared<Sphere>(glm::vec3( 0.0, -100.5, -1.0), 100.0, materialGround));
+   world.addObject(std::make_shared<Sphere>(glm::vec3( 0.0,    0.0, -1.0),   0.5, materialCenter));
+   world.addObject(std::make_shared<Sphere>(glm::vec3(-1.0,    0.0, -1.0),   0.5, materialLeft));
+   world.addObject(std::make_shared<Sphere>(glm::vec3( 1.0,    0.0, -1.0),   0.5, materialRight));
 
    render(image, world, aspectRatio);
    writeImage("image.ppm", image);
