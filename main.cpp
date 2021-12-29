@@ -3,6 +3,8 @@
 #include <fstream>
 #include <vector>
 #include <random>
+#include <thread>
+#include <algorithm>
 #include "external/glm/glm/vec3.hpp"
 #include "external/glm/glm/glm.hpp"
 #include "external/glm/glm/gtx/norm.hpp"
@@ -346,30 +348,48 @@ glm::vec3 rayColor(const Ray& ray, const World& world, int32_t depth)
    return (1.0f - t) * glm::vec3(1.0f, 1.0f, 1.0f) + t * glm::vec3(0.5f, 0.7f, 1.0f);
 }
 
-void render(Image& image, const World& world, const Camera& camera, uint32_t samplesPerPixel, int32_t maxDepth)
+void render(Image& image, const World& world, const Camera& camera, uint32_t samplesPerPixel, int32_t maxDepth, uint32_t numThreads)
 {
-   std::cout << "Remaining rows: " << std::endl;
+   std::cout << "Rendering using " << numThreads << " threads";
 
-   for (int32_t y = image.height - 1; y >= 0; y--)
+   auto work = [&](int32_t startRow, uint32_t numRows)
    {
-      std::cout << y << ", " << std::flush;
-      for (uint32_t x = 0; x < image.width; x++)
+      for (int32_t y = startRow; y < (startRow + numRows); y++)
       {
-         glm::vec3 color = glm::vec3(0.0f);
-         for (uint32_t s = 0; s < samplesPerPixel; s++)
+         for (uint32_t x = 0; x < image.width; x++)
          {
-            float u = ((float)x + randomFloat(0.0f, 1.0f)) / (image.width - 1);
-            float v = ((float)y + randomFloat(0.0f, 1.0f)) / (image.height - 1);
-            Ray ray = camera.getRay(u, v);
-            color += rayColor(ray, world, maxDepth);
-         }
+            glm::vec3 color = glm::vec3(0.0f);
+            for (uint32_t s = 0; s < samplesPerPixel; s++)
+            {
+               float u = ((float)x + randomFloat(0.0f, 1.0f)) / (image.width - 1);
+               float v = ((float)y + randomFloat(0.0f, 1.0f)) / (image.height - 1);
+               Ray ray = camera.getRay(u, v);
+               color += rayColor(ray, world, maxDepth);
+            }
 
-         color = color / glm::vec3(samplesPerPixel);
-         color = glm::sqrt(color); // Gamma correction
-         color = glm::clamp(color, glm::vec3(0.0f), glm::vec3(0.999f));
-         image.pixels[y * image.width + x] = color;
+            color = color / glm::vec3(samplesPerPixel);
+            color = glm::sqrt(color); // Gamma correction
+            color = glm::clamp(color, glm::vec3(0.0f), glm::vec3(0.999f));
+            image.pixels[y * image.width + x] = color;
+         }
+         std::cout << "." << std::flush;
       }
+   };
+
+   const uint32_t rowsPerThread = image.height / numThreads;
+   std::vector<std::thread> workerThreads;
+
+   for (uint32_t i = 0; i < numThreads; i++)
+   {
+      uint32_t rowsToProcess = rowsPerThread;
+      if (i == (numThreads - 1))
+         rowsToProcess = image.height - ((numThreads - 1) * rowsToProcess);
+
+      workerThreads.push_back(std::thread(work, i * rowsPerThread, rowsToProcess));
    }
+
+   // Wait for all workers to finish
+   std::for_each(workerThreads.begin(), workerThreads.end(), [](std::thread& t) { t.join(); });
 
    std::cout << std::endl << "Rendering done!" << std::endl;
 }
@@ -433,12 +453,13 @@ int main(void)
    const uint32_t height = (uint32_t)(width / aspectRatio);
    const uint32_t samplesPerPixel = 500;
    const int32_t maxDepth = 50;
+   const uint32_t numThreads = 16;
 
    Image image(width, height);
    Camera camera = Camera(glm::vec3(13.0f, 2.0f, 3.0f), glm::vec3(0.0f), 20.0f, aspectRatio, 0.1f, 10.0f);
    World world = createRandomScene();
 
-   render(image, world, camera, samplesPerPixel, maxDepth);
+   render(image, world, camera, samplesPerPixel, maxDepth, numThreads);
    writeImage("image.ppm", image);
 
    return 0;

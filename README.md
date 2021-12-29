@@ -5,4 +5,4 @@ An implementation of Peter Shirley's [Ray Tracing in One Weekend](https://raytra
 
 ## Building
 
-`g++ -O3 main.cpp`
+`g++ -O3 main.cpp -pthread`
