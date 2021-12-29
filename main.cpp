@@ -428,9 +428,9 @@ World createRandomScene()
 int main(void)
 {
    const float aspectRatio = 3.0f / 2.0f;
-   const uint32_t width = 400;
+   const uint32_t width = 1200;
    const uint32_t height = (uint32_t)(width / aspectRatio);
-   const uint32_t samplesPerPixel = 30;
+   const uint32_t samplesPerPixel = 500;
    const int32_t maxDepth = 50;
 
    Image image(width, height);
