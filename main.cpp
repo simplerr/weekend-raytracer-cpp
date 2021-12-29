@@ -239,10 +239,11 @@ public:
       float half_b = glm::dot(originToCenter, ray.dir);
       float c = glm::length2(originToCenter) - radius * radius;
       float discriminant = half_b * half_b - a * c;
-      float sqrtd = glm::sqrt(discriminant);
 
       if (discriminant < 0)
          return false;
+
+      float sqrtd = glm::sqrt(discriminant);
 
       // Find nearest root in the acceptable range
       float root = (-half_b - sqrtd) / a;
